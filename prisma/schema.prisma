@@ -1,0 +1,139 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Stream {
+  SCIENCE
+  HUMANITIES
+}
+
+enum LevelKind {
+  SUBJECT
+  CAPSTONE
+  FINAL
+}
+
+enum ProgressStatus {
+  LOCKED
+  UNLOCKED
+  COMPLETED
+}
+
+model Student {
+  id        String   @id @default(cuid())
+  name      String
+  className String // "11" | "12"
+  stream    Stream
+  section   String
+  roll      String
+  xp        Int      @default(0)
+  createdAt DateTime @default(now())
+
+  selectedCareerId String?
+  selectedCareer   Career? @relation(fields: [selectedCareerId], references: [id])
+
+  progress Progress[]
+
+  // A given roll number within a class/section/stream identifies exactly one
+  // real student — this is what prevents duplicate registrations. Name is
+  // intentionally excluded so a mismatched name on an existing roll is
+  // rejected instead of silently creating a second account for the same seat.
+  @@unique([className, section, roll, stream])
+}
+
+model Career {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  stream      Stream
+  tagline     String
+  icon        String
+  order       Int
+  description String
+
+  // A career a student typed in themselves (not one of the curated list).
+  // It gets a real path built from the same shared subject levels plus a
+  // generic capstone — the student is never shown that it isn't bespoke.
+  isCustom          Boolean @default(false)
+  createdByStudentId String?
+
+  paths     CareerPath[]
+  students  Student[]
+
+  @@index([stream])
+}
+
+// Ordered list of levels that make up one career's path.
+model CareerPath {
+  id       String @id @default(cuid())
+  careerId String
+  career   Career @relation(fields: [careerId], references: [id], onDelete: Cascade)
+  levelId  String
+  level    Level  @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  order    Int
+
+  @@unique([careerId, order])
+  @@index([levelId])
+}
+
+// A level is a bank of questions on one topic. SUBJECT levels are shared
+// across many careers in a stream; CAPSTONE/FINAL levels are unique to one
+// career (career field set) and test profession-specific scenarios.
+model Level {
+  id          String    @id @default(cuid())
+  stream      Stream
+  kind        LevelKind
+  subject     String // e.g. "Physics", "History", "Career Capstone"
+  title       String
+  description String
+  passScore   Int       @default(60) // percent required to clear
+  baseXp      Int       @default(100)
+
+  // One shared "final challenge" per stream, reused as the capstone for
+  // every student-typed custom career. The API overrides its displayed
+  // subject/title with the student's own career name so it reads as
+  // tailored, even though the underlying questions are the same for all.
+  isGenericCapstone Boolean @default(false)
+
+  questions Question[]
+  paths     CareerPath[]
+  progress  Progress[]
+}
+
+model Question {
+  id          String  @id @default(cuid())
+  levelId     String
+  level       Level   @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  order       Int
+  text        String
+  options     String // JSON-encoded string[]
+  correctIndex Int
+  hint        String
+  explanation String
+  difficulty  Int     @default(1) // 1 easy - 3 hard
+}
+
+model Progress {
+  id          String         @id @default(cuid())
+  studentId   String
+  student     Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  careerId    String
+  levelId     String
+  level       Level          @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  status      ProgressStatus @default(LOCKED)
+  bestScore   Int            @default(0) // percent
+  stars       Int            @default(0) // 0-3
+  xpEarned    Int            @default(0)
+  attempts    Int            @default(0)
+  hintsUsed   Int            @default(0)
+  completedAt DateTime?
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([studentId, careerId, levelId])
+  @@index([studentId, careerId])
+}
